@@ -854,7 +854,11 @@ static int __orderly_reboot(void)
 {
 	int ret;
 
+#ifdef VERBOSE_LIBKRUN
 	ret = run_cmd(reboot_cmd);
+#else
+	ret = 1;
+#endif
 
 	if (ret) {
 		pr_warn("Failed to start orderly reboot: forcing the issue\n");
