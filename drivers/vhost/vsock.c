@@ -421,9 +421,11 @@ static struct virtio_transport vhost_transport = {
 		.cancel_pkt               = vhost_transport_cancel_pkt,
 
 		.dgram_enqueue            = virtio_transport_dgram_enqueue,
-		.dgram_dequeue            = virtio_transport_dgram_dequeue,
 		.dgram_bind               = virtio_transport_dgram_bind,
 		.dgram_allow              = virtio_transport_dgram_allow,
+		.dgram_get_cid		  = virtio_transport_dgram_get_cid,
+		.dgram_get_port		  = virtio_transport_dgram_get_port,
+		.dgram_get_length	  = virtio_transport_dgram_get_length,
 
 		.stream_enqueue           = virtio_transport_stream_enqueue,
 		.stream_dequeue           = virtio_transport_stream_dequeue,

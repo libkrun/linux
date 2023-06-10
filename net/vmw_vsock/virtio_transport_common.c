@@ -1204,6 +1204,24 @@ int virtio_transport_dgram_bind(struct vsock_sock *vsk,
 }
 EXPORT_SYMBOL_GPL(virtio_transport_dgram_bind);
 
+int virtio_transport_dgram_get_cid(struct sk_buff *skb, unsigned int *cid)
+{
+	return -EOPNOTSUPP;
+}
+EXPORT_SYMBOL_GPL(virtio_transport_dgram_get_cid);
+
+int virtio_transport_dgram_get_port(struct sk_buff *skb, unsigned int *port)
+{
+	return -EOPNOTSUPP;
+}
+EXPORT_SYMBOL_GPL(virtio_transport_dgram_get_port);
+
+int virtio_transport_dgram_get_length(struct sk_buff *skb, size_t *len)
+{
+	return -EOPNOTSUPP;
+}
+EXPORT_SYMBOL_GPL(virtio_transport_dgram_get_length);
+
 bool virtio_transport_dgram_allow(u32 cid, u32 port)
 {
 	return false;

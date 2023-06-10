@@ -557,8 +557,17 @@ static int hvs_dgram_bind(struct vsock_sock *vsk, struct sockaddr_vm *addr)
 	return -EOPNOTSUPP;
 }
 
-static int hvs_dgram_dequeue(struct vsock_sock *vsk, struct msghdr *msg,
-			     size_t len, int flags)
+static int hvs_dgram_get_cid(struct sk_buff *skb, unsigned int *cid)
+{
+	return -EOPNOTSUPP;
+}
+
+static int hvs_dgram_get_port(struct sk_buff *skb, unsigned int *port)
+{
+	return -EOPNOTSUPP;
+}
+
+static int hvs_dgram_get_length(struct sk_buff *skb, size_t *len)
 {
 	return -EOPNOTSUPP;
 }
@@ -837,7 +846,9 @@ static struct vsock_transport hvs_transport = {
 	.shutdown                 = hvs_shutdown,
 
 	.dgram_bind               = hvs_dgram_bind,
-	.dgram_dequeue            = hvs_dgram_dequeue,
+	.dgram_get_cid		  = hvs_dgram_get_cid,
+	.dgram_get_port		  = hvs_dgram_get_port,
+	.dgram_get_length	  = hvs_dgram_get_length,
 	.dgram_enqueue            = hvs_dgram_enqueue,
 	.dgram_allow              = hvs_dgram_allow,
 

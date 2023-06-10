@@ -1735,57 +1735,40 @@ static int vmci_transport_dgram_enqueue(
 	return err - sizeof(*dg);
 }
 
-static int vmci_transport_dgram_dequeue(struct vsock_sock *vsk,
-					struct msghdr *msg, size_t len,
-					int flags)
+static int vmci_transport_dgram_get_cid(struct sk_buff *skb, unsigned int *cid)
 {
-	int err;
 	struct vmci_datagram *dg;
-	size_t payload_len;
-	struct sk_buff *skb;
-
-	if (flags & MSG_OOB || flags & MSG_ERRQUEUE)
-		return -EOPNOTSUPP;
-
-	/* Retrieve the head sk_buff from the socket's receive queue. */
-	err = 0;
-	skb = skb_recv_datagram(&vsk->sk, flags, &err);
-	if (!skb)
-		return err;
 
 	dg = (struct vmci_datagram *)skb->data;
 	if (!dg)
-		/* err is 0, meaning we read zero bytes. */
-		goto out;
+		return -EINVAL;
 
-	payload_len = dg->payload_size;
-	/* Ensure the sk_buff matches the payload size claimed in the packet. */
-	if (payload_len != skb->len - sizeof(*dg)) {
-		err = -EINVAL;
-		goto out;
-	}
+	*cid = dg->src.context;
+	return 0;
+}
 
-	if (payload_len > len) {
-		payload_len = len;
-		msg->msg_flags |= MSG_TRUNC;
-	}
+static int vmci_transport_dgram_get_port(struct sk_buff *skb, unsigned int *port)
+{
+	struct vmci_datagram *dg;
 
-	/* Place the datagram payload in the user's iovec. */
-	err = skb_copy_datagram_msg(skb, sizeof(*dg), msg, payload_len);
-	if (err)
-		goto out;
+	dg = (struct vmci_datagram *)skb->data;
+	if (!dg)
+		return -EINVAL;
 
-	if (msg->msg_name) {
-		/* Provide the address of the sender. */
-		DECLARE_SOCKADDR(struct sockaddr_vm *, vm_addr, msg->msg_name);
-		vsock_addr_init(vm_addr, dg->src.context, dg->src.resource);
-		msg->msg_namelen = sizeof(*vm_addr);
-	}
-	err = payload_len;
+	*port = dg->src.resource;
+	return 0;
+}
 
-out:
-	skb_free_datagram(&vsk->sk, skb);
-	return err;
+static int vmci_transport_dgram_get_length(struct sk_buff *skb, size_t *len)
+{
+	struct vmci_datagram *dg;
+
+	dg = (struct vmci_datagram *)skb->data;
+	if (!dg)
+		return -EINVAL;
+
+	*len = dg->payload_size;
+	return 0;
 }
 
 static bool vmci_transport_dgram_allow(u32 cid, u32 port)
@@ -2044,9 +2027,12 @@ static struct vsock_transport vmci_transport = {
 	.release = vmci_transport_release,
 	.connect = vmci_transport_connect,
 	.dgram_bind = vmci_transport_dgram_bind,
-	.dgram_dequeue = vmci_transport_dgram_dequeue,
 	.dgram_enqueue = vmci_transport_dgram_enqueue,
 	.dgram_allow = vmci_transport_dgram_allow,
+	.dgram_get_cid = vmci_transport_dgram_get_cid,
+	.dgram_get_port = vmci_transport_dgram_get_port,
+	.dgram_get_length = vmci_transport_dgram_get_length,
+	.dgram_payload_offset = sizeof(struct vmci_datagram),
 	.stream_dequeue = vmci_transport_stream_dequeue,
 	.stream_enqueue = vmci_transport_stream_enqueue,
 	.stream_has_data = vmci_transport_stream_has_data,
