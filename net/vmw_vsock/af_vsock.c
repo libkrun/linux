@@ -480,6 +480,18 @@ vsock_connectible_lookup_transport(unsigned int cid, __u8 flags)
 	return transport;
 }
 
+static const struct vsock_transport *
+vsock_dgram_lookup_transport(unsigned int cid, __u8 flags)
+{
+	const struct vsock_transport *transport;
+
+	transport = vsock_connectible_lookup_transport(cid, flags);
+	if (transport)
+		return transport;
+
+	return transport_dgram;
+}
+
 /* Assign a transport to a socket and call the .init transport callback.
  *
  * Note: for connection oriented socket this must be called when vsk->remote_addr
@@ -518,7 +530,8 @@ int vsock_assign_transport(struct vsock_sock *vsk, struct vsock_sock *psk)
 
 	switch (sk->sk_type) {
 	case SOCK_DGRAM:
-		new_transport = transport_dgram;
+		new_transport = vsock_dgram_lookup_transport(remote_cid,
+							     remote_flags);
 		break;
 	case SOCK_STREAM:
 	case SOCK_SEQPACKET:
@@ -775,6 +788,9 @@ static int __vsock_bind_connectible(struct vsock_sock *vsk,
 static int __vsock_bind_dgram(struct vsock_sock *vsk,
 			      struct sockaddr_vm *addr)
 {
+	if (!vsk->transport || !vsk->transport->dgram_bind)
+		return -EINVAL;
+
 	return vsk->transport->dgram_bind(vsk, addr);
 }
 
@@ -1309,19 +1325,24 @@ static int vsock_dgram_sendmsg(struct socket *sock, struct msghdr *msg,
 
 	lock_sock(sk);
 
-	transport = vsk->transport;
-
-	err = vsock_auto_bind(vsk);
-	if (err)
-		goto out;
-
-
 	/* If the provided message contains an address, use that.  Otherwise
 	 * fall back on the socket's remote handle (if it has been connected).
 	 */
 	if (msg->msg_name &&
 	    vsock_addr_cast(msg->msg_name, msg->msg_namelen,
 			    &remote_addr) == 0) {
+		transport = vsock_dgram_lookup_transport(remote_addr->svm_cid,
+							 remote_addr->svm_flags);
+		if (!transport) {
+			err = -EINVAL;
+			goto out;
+		}
+
+		if (!try_module_get(transport->module)) {
+			err = -ENODEV;
+			goto out;
+		}
+
 		/* Ensure this address is of the right type and is a valid
 		 * destination.
 		 */
@@ -1330,11 +1351,27 @@ static int vsock_dgram_sendmsg(struct socket *sock, struct msghdr *msg,
 			remote_addr->svm_cid = transport->get_local_cid();
 
 		if (!vsock_addr_bound(remote_addr)) {
+			module_put(transport->module);
 			err = -EINVAL;
 			goto out;
 		}
+
+		if (!transport->dgram_allow(remote_addr->svm_cid,
+					    remote_addr->svm_port)) {
+			module_put(transport->module);
+			err = -EINVAL;
+			goto out;
+		}
+
+		err = transport->dgram_enqueue(vsk, remote_addr, msg, len);
+		module_put(transport->module);
 	} else if (sock->state == SS_CONNECTED) {
 		remote_addr = &vsk->remote_addr;
+		transport = vsk->transport;
+
+		err = vsock_auto_bind(vsk);
+		if (err)
+			goto out;
 
 		if (remote_addr->svm_cid == VMADDR_CID_ANY)
 			remote_addr->svm_cid = transport->get_local_cid();
@@ -1342,22 +1379,22 @@ static int vsock_dgram_sendmsg(struct socket *sock, struct msghdr *msg,
 		/* XXX Should connect() or this function ensure remote_addr is
 		 * bound?
 		 */
-		if (!vsock_addr_bound(&vsk->remote_addr)) {
+		if (!vsock_addr_bound(remote_addr)) {
 			err = -EINVAL;
 			goto out;
 		}
+
+		if (!transport->dgram_allow(remote_addr->svm_cid,
+					    remote_addr->svm_port)) {
+			err = -EINVAL;
+			goto out;
+		}
+
+		err = transport->dgram_enqueue(vsk, remote_addr, msg, len);
 	} else {
 		err = -EINVAL;
 		goto out;
 	}
-
-	if (!transport->dgram_allow(remote_addr->svm_cid,
-				    remote_addr->svm_port)) {
-		err = -EINVAL;
-		goto out;
-	}
-
-	err = transport->dgram_enqueue(vsk, remote_addr, msg, len);
 
 out:
 	release_sock(sk);
@@ -1392,13 +1429,18 @@ static int vsock_dgram_connect(struct socket *sock,
 	if (err)
 		goto out;
 
+	memcpy(&vsk->remote_addr, remote_addr, sizeof(vsk->remote_addr));
+
+	err = vsock_assign_transport(vsk, NULL);
+	if (err)
+		goto out;
+
 	if (!vsk->transport->dgram_allow(remote_addr->svm_cid,
 					 remote_addr->svm_port)) {
 		err = -EINVAL;
 		goto out;
 	}
 
-	memcpy(&vsk->remote_addr, remote_addr, sizeof(vsk->remote_addr));
 	sock->state = SS_CONNECTED;
 
 	/* sock map disallows redirection of non-TCP sockets with sk_state !=

@@ -552,11 +552,6 @@ static void hvs_destruct(struct vsock_sock *vsk)
 	vsk->trans = NULL;
 }
 
-static int hvs_dgram_bind(struct vsock_sock *vsk, struct sockaddr_vm *addr)
-{
-	return -EOPNOTSUPP;
-}
-
 static int hvs_dgram_get_cid(struct sk_buff *skb, unsigned int *cid)
 {
 	return -EOPNOTSUPP;
@@ -845,7 +840,6 @@ static struct vsock_transport hvs_transport = {
 	.connect                  = hvs_connect,
 	.shutdown                 = hvs_shutdown,
 
-	.dgram_bind               = hvs_dgram_bind,
 	.dgram_get_cid		  = hvs_dgram_get_cid,
 	.dgram_get_port		  = hvs_dgram_get_port,
 	.dgram_get_length	  = hvs_dgram_get_length,
