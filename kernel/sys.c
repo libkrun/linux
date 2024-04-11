@@ -44,6 +44,7 @@
 #include <linux/version.h>
 #include <linux/ctype.h>
 #include <linux/syscall_user_dispatch.h>
+#include <linux/memory_ordering_model.h>
 
 #include <linux/compat.h>
 #include <linux/syscalls.h>
@@ -2534,6 +2535,16 @@ static int prctl_set_thp_disable(bool thp_disable, unsigned long flags,
 	return 0;
 }
 
+int __weak arch_prctl_mem_model_get(struct task_struct *t)
+{
+	return -EINVAL;
+}
+
+int __weak arch_prctl_mem_model_set(struct task_struct *t, unsigned long val)
+{
+	return -EINVAL;
+}
+
 SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 		unsigned long, arg4, unsigned long, arg5)
 {
@@ -2909,6 +2920,16 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 			break;
 		if (arg3 & PR_CFI_LOCK && !(arg3 & PR_CFI_DISABLE))
 			error = arch_prctl_lock_branch_landing_pad_state(me);
+		break;
+	case PR_GET_MEM_MODEL:
+		if (arg2 || arg3 || arg4 || arg5)
+			return -EINVAL;
+		error = arch_prctl_mem_model_get(me);
+		break;
+	case PR_SET_MEM_MODEL:
+		if (arg3 || arg4 || arg5)
+			return -EINVAL;
+		error = arch_prctl_mem_model_set(me, arg2);
 		break;
 	default:
 		trace_task_prctl_unknown(option, arg2, arg3, arg4, arg5);
