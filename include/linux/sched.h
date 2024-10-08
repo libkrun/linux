@@ -1675,6 +1675,11 @@ struct task_struct {
 #ifdef CONFIG_USER_EVENTS
 	struct user_event_mm		*user_event_mm;
 #endif
+	/*
+	 * Whether the task wants to use compat input syscalls even if it's
+	 * a 64-bit process.
+	 */
+	bool compat_input;
 
 #ifdef CONFIG_UNWIND_USER
 	struct unwind_task_info		unwind_info;
