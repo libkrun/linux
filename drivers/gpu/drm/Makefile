@@ -143,7 +143,8 @@ drm_kms_helper-y := \
 	drm_probe_helper.o \
 	drm_rect.o \
 	drm_self_refresh_helper.o \
-	drm_simple_kms_helper.o
+	drm_simple_kms_helper.o \
+	drm_vblank_helper.o
 drm_kms_helper-$(CONFIG_DRM_CLIENT_SETUP) += \
 	drm_client_setup.o
 drm_kms_helper-$(CONFIG_DRM_PANEL_BRIDGE) += bridge/panel.o
