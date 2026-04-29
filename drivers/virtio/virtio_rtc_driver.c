@@ -575,7 +575,7 @@ static int viortc_msg_xfer(struct viortc_vq *vq, struct viortc_msg *msg,
  */
 
 /** timeout for clock readings, where timeouts are considered non-fatal */
-#define VIORTC_MSG_READ_TIMEOUT secs_to_jiffies(60)
+#define VIORTC_MSG_READ_TIMEOUT msecs_to_jiffies(60 * 1000)
 
 /**
  * viortc_read() - VIRTIO_RTC_REQ_READ wrapper
@@ -961,7 +961,7 @@ static int viortc_init_rtc_class_clock(struct viortc_dev *viortc,
 	viortc->viortc_class = viortc_class;
 
 	if (have_alarm)
-		devm_device_init_wakeup(dev);
+		device_init_wakeup(dev, true);
 
 	return viortc_class_register(viortc_class) ?: 1;
 }
