@@ -71,6 +71,7 @@ static struct virtio_transport loopback_transport = {
 		.dgram_get_cid		  = virtio_transport_dgram_get_cid,
 		.dgram_get_port		  = virtio_transport_dgram_get_port,
 		.dgram_get_length	  = virtio_transport_dgram_get_length,
+		.dgram_has_data		  = virtio_transport_dgram_has_data,
 
 		.stream_dequeue           = virtio_transport_stream_dequeue,
 		.stream_enqueue           = virtio_transport_stream_enqueue,

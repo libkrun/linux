@@ -76,6 +76,7 @@ struct vsock_sock {
 };
 
 s64 vsock_connectible_has_data(struct vsock_sock *vsk);
+s64 vsock_dgram_has_data(struct vsock_sock *vsk);
 s64 vsock_stream_has_data(struct vsock_sock *vsk);
 s64 vsock_stream_has_space(struct vsock_sock *vsk);
 struct sock *vsock_create_connected(struct sock *parent);
@@ -134,6 +135,7 @@ struct vsock_transport {
 	 * header.
 	 */
 	const size_t dgram_payload_offset;
+	s64 (*dgram_has_data)(struct vsock_sock *);
 
 	/* STREAM. */
 	/* TODO: stream_bind() */

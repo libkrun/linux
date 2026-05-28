@@ -1013,6 +1013,21 @@ int virtio_transport_dgram_get_length(struct sk_buff *skb, size_t *len)
 }
 EXPORT_SYMBOL_GPL(virtio_transport_dgram_get_length);
 
+s64 virtio_transport_dgram_has_data(struct vsock_sock *vsk)
+{
+	struct sock *sk = sk_vsock(vsk);
+	struct sk_buff *skb;
+	s64 bytes = 0;
+
+	spin_lock_bh(&sk->sk_receive_queue.lock);
+	skb_queue_walk(&sk->sk_receive_queue, skb)
+		bytes += skb->len;
+	spin_unlock_bh(&sk->sk_receive_queue.lock);
+
+	return bytes;
+}
+EXPORT_SYMBOL_GPL(virtio_transport_dgram_has_data);
+
 s64 virtio_transport_stream_has_data(struct vsock_sock *vsk)
 {
 	struct virtio_vsock_sock *vvs = vsk->trans;

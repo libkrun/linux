@@ -1041,6 +1041,15 @@ s64 vsock_stream_has_data(struct vsock_sock *vsk)
 }
 EXPORT_SYMBOL_GPL(vsock_stream_has_data);
 
+s64 vsock_dgram_has_data(struct vsock_sock *vsk)
+{
+	if (WARN_ON(!vsk->transport))
+		return 0;
+
+	return vsk->transport->dgram_has_data(vsk);
+}
+EXPORT_SYMBOL_GPL(vsock_dgram_has_data);
+
 s64 vsock_connectible_has_data(struct vsock_sock *vsk)
 {
 	struct sock *sk = sk_vsock(vsk);
@@ -1608,7 +1617,11 @@ static int vsock_do_ioctl(struct socket *sock, unsigned int cmd,
 			break;
 		}
 
-		n_bytes = vsock_stream_has_data(vsk);
+		if (sk->sk_type == SOCK_DGRAM)
+			n_bytes = vsock_dgram_has_data(vsk);
+		else
+			n_bytes = vsock_stream_has_data(vsk);
+
 		if (n_bytes < 0) {
 			ret = n_bytes;
 			break;
