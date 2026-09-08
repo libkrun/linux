@@ -14,6 +14,10 @@
 
 #include "uapi/linux/virtio_media.h"
 
+#ifndef file_to_v4l2_fh
+#define file_to_v4l2_fh(file) ((struct v4l2_fh *)(file)->private_data)
+#endif
+
 #define DESC_CHAIN_MAX_LEN SG_MAX_SINGLE_ALLOC
 
 #define VIRTIO_MEDIA_DEFAULT_DRIVER_NAME "virtio-media"

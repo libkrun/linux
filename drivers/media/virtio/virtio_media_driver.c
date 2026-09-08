@@ -54,7 +54,7 @@ virtio_media_session_alloc(struct virtio_media *vv, u32 id,
 	int i;
 	int ret;
 
-	session = kzalloc_obj(*session, GFP_KERNEL);
+	session = kzalloc(sizeof(*session), GFP_KERNEL);
 	if (!session)
 		goto err_session;
 
