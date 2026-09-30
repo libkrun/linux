@@ -572,9 +572,11 @@ reachable through the hypervisor (e.g. Nitro Enclaves) to address both using
 a single CID space, without requiring applications to set
 ``VMADDR_FLAG_TO_HOST``.
 
-When the fallback is taken, ``VMADDR_FLAG_TO_HOST`` is automatically set on
-the remote address so that userspace can determine the path via
-``getpeername()``.
+When a connect falls back, ``VMADDR_FLAG_TO_HOST`` is automatically set on
+the connected peer address so that userspace can determine the selected path
+via ``getpeername()``. A datagram send on an existing connection can also fall
+back; in that case the flag is set only on the per-send destination. Later
+sends can use H2G again if it takes ownership of the destination CID.
 
 Note: With this sysctl enabled, user space that attempts to talk to a guest
 CID which is not implemented by the H2G transport will create host vsock

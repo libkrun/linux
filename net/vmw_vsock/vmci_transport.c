@@ -629,18 +629,21 @@ static int vmci_transport_recv_dgram_cb(void *data, struct vmci_datagram *dg)
 	vsk = vsock_sk(sk);
 	if (!vmci_transport_allow_dgram(vsk, dg->src.context))
 		return VMCI_ERROR_NO_ACCESS;
+	if (dg->payload_size > VMCI_MAX_DG_PAYLOAD_SIZE)
+		return VMCI_ERROR_INVALID_ARGS;
 
-	size = VMCI_DG_SIZE(dg);
+	size = dg->payload_size;
 
-	/* Attach the packet to the socket's receive queue as an sk_buff. */
+	/* Queue only the payload, with transport-independent source metadata. */
 	skb = alloc_skb(size, GFP_ATOMIC);
 	if (!skb)
 		return VMCI_ERROR_NO_MEM;
 
 	/* sk_receive_skb() will do a sock_put(), so hold here. */
 	sock_hold(sk);
-	skb_put(skb, size);
-	memcpy(skb->data, dg, size);
+	skb_put_data(skb, VMCI_DG_PAYLOAD(dg), size);
+	vsock_addr_init(&VSOCK_DGRAM_SKB_CB(skb)->src,
+			dg->src.context, dg->src.resource);
 	sk_receive_skb(sk, skb, 0);
 
 	return VMCI_SUCCESS;
@@ -1690,39 +1693,62 @@ static void vmci_transport_release(struct vsock_sock *vsk)
 	}
 }
 
+#define VMCI_DGRAM_BIND_RETRIES 24
+
 static int vmci_transport_dgram_bind(struct vsock_sock *vsk,
 				     struct sockaddr_vm *addr)
 {
+	const bool auto_port = addr->svm_port == VMADDR_PORT_ANY;
 	u32 port;
 	u32 flags;
+	unsigned int i;
 	int err;
 
-	/* VMCI will select a resource ID for us if we provide
-	 * VMCI_INVALID_ID.
+	/* VMCI handles occupy a global port space. Local namespaces use only
+	 * the core binding so they cannot receive external VMCI datagrams.
 	 */
-	port = addr->svm_port == VMADDR_PORT_ANY ?
-			VMCI_INVALID_ID : addr->svm_port;
+	if (!vsock_net_mode_global(vsk))
+		return vsock_bind_common(vsk, addr);
 
-	if (port <= LAST_RESERVED_PORT && !capable(CAP_NET_BIND_SERVICE))
-		return -EACCES;
+	/* A handle always uses VMCI's context ID. Other explicit CIDs can
+	 * receive through loopback or a directional transport only.
+	 */
+	if (addr->svm_cid != VMADDR_CID_ANY &&
+	    addr->svm_cid != vmci_get_context_id())
+		return vsock_bind_common(vsk, addr);
 
 	flags = addr->svm_cid == VMADDR_CID_ANY ?
 				VMCI_FLAG_ANYCID_DG_HND : 0;
 
-	err = vmci_transport_datagram_create_hnd(port, flags,
-						 vmci_transport_recv_dgram_cb,
-						 &vsk->sk,
-						 &vmci_trans(vsk)->dg_handle);
-	if (err < VMCI_SUCCESS)
-		return vmci_transport_error_to_vsock_error(err);
-	vsock_addr_init(&vsk->local_addr, addr->svm_cid,
-			vmci_trans(vsk)->dg_handle.resource);
+	/* Reserve the same port for VMCI and directional receive. A VMCI
+	 * resource may already occupy a core-selected ephemeral port.
+	 */
+	for (i = 0; i < VMCI_DGRAM_BIND_RETRIES; i++) {
+		err = vsock_bind_common(vsk, addr);
+		if (err)
+			return err;
 
-	return 0;
+		port = vsk->local_addr.svm_port;
+		err = vmci_transport_datagram_create_hnd(port, flags,
+							 vmci_transport_recv_dgram_cb,
+							 &vsk->sk,
+							 &vmci_trans(vsk)->dg_handle);
+		if (err >= VMCI_SUCCESS)
+			return 0;
+
+		vsock_unbind_common(vsk);
+		vmci_trans(vsk)->dg_handle = VMCI_INVALID_HANDLE;
+		if (!auto_port || (err != VMCI_ERROR_ALREADY_EXISTS &&
+				   err != VMCI_ERROR_DUPLICATE_ENTRY))
+			return vmci_transport_error_to_vsock_error(err);
+	}
+
+	return -EADDRNOTAVAIL;
 }
 
 static int vmci_transport_dgram_enqueue(
 	struct vsock_sock *vsk,
+	const struct vsock_transport *transport,
 	struct sockaddr_vm *remote_addr,
 	struct msghdr *msg,
 	size_t len)
@@ -1761,71 +1787,12 @@ static int vmci_transport_dgram_enqueue(
 	return err - sizeof(*dg);
 }
 
-static size_t vmci_transport_dgram_payload_len(const struct sk_buff *skb)
-{
-	if (skb->len < sizeof(struct vmci_datagram))
-		return 0;
-
-	return skb->len - sizeof(struct vmci_datagram);
-}
-
-static int vmci_transport_dgram_dequeue(struct vsock_sock *vsk,
-					struct msghdr *msg, size_t len,
-					int flags)
-{
-	int err;
-	struct vmci_datagram *dg;
-	size_t payload_len;
-	struct sk_buff *skb;
-
-	if (flags & MSG_OOB || flags & MSG_ERRQUEUE)
-		return -EOPNOTSUPP;
-
-	/* Retrieve the head sk_buff from the socket's receive queue. */
-	err = 0;
-	skb = skb_recv_datagram(&vsk->sk, flags, &err);
-	if (!skb)
-		return err;
-
-	dg = (struct vmci_datagram *)skb->data;
-	if (!dg)
-		/* err is 0, meaning we read zero bytes. */
-		goto out;
-
-	payload_len = dg->payload_size;
-	/* Ensure the sk_buff matches the payload size claimed in the packet. */
-	if (payload_len != skb->len - sizeof(*dg)) {
-		err = -EINVAL;
-		goto out;
-	}
-
-	if (payload_len > len) {
-		payload_len = len;
-		msg->msg_flags |= MSG_TRUNC;
-	}
-
-	/* Place the datagram payload in the user's iovec. */
-	err = skb_copy_datagram_msg(skb, sizeof(*dg), msg, payload_len);
-	if (err)
-		goto out;
-
-	if (msg->msg_name) {
-		/* Provide the address of the sender. */
-		DECLARE_SOCKADDR(struct sockaddr_vm *, vm_addr, msg->msg_name);
-		vsock_addr_init(vm_addr, dg->src.context, dg->src.resource);
-		msg->msg_namelen = sizeof(*vm_addr);
-	}
-	err = payload_len;
-
-out:
-	skb_free_datagram(&vsk->sk, skb);
-	return err;
-}
-
 static bool vmci_transport_dgram_allow(struct vsock_sock *vsk, u32 cid,
 				       u32 port)
 {
 	if (!vsock_net_mode_global(vsk))
+		return false;
+	if (vmci_handle_is_invalid(vmci_trans(vsk)->dg_handle))
 		return false;
 
 	if (cid == VMADDR_CID_HYPERVISOR) {
@@ -2082,10 +2049,9 @@ static struct vsock_transport vmci_transport = {
 	.release = vmci_transport_release,
 	.connect = vmci_transport_connect,
 	.dgram_bind = vmci_transport_dgram_bind,
-	.dgram_dequeue = vmci_transport_dgram_dequeue,
-	.dgram_payload_len = vmci_transport_dgram_payload_len,
 	.dgram_enqueue = vmci_transport_dgram_enqueue,
 	.dgram_allow = vmci_transport_dgram_allow,
+	.dgram_fallback = true,
 	.stream_dequeue = vmci_transport_stream_dequeue,
 	.stream_enqueue = vmci_transport_stream_enqueue,
 	.stream_has_data = vmci_transport_stream_has_data,
@@ -2153,7 +2119,8 @@ static int __init vmci_transport_init(void)
 	/* Register only with dgram feature, other features (H2G, G2H) will be
 	 * registered when the first host or guest becomes active.
 	 */
-	err = vsock_core_register(&vmci_transport, VSOCK_TRANSPORT_F_DGRAM);
+	err = vsock_core_register(&vmci_transport,
+				  VSOCK_TRANSPORT_F_DGRAM_FALLBACK);
 	if (err < 0)
 		goto err_unsubscribe;
 

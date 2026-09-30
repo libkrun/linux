@@ -26,6 +26,13 @@ extern spinlock_t vsock_table_lock;
 #define vsock_sk(__sk)    ((struct vsock_sock *)__sk)
 #define sk_vsock(__vsk)   (&(__vsk)->sk)
 
+/* Datagrams from different transports share the socket receive queue. */
+struct vsock_dgram_skb_cb {
+	struct sockaddr_vm src;
+};
+
+#define VSOCK_DGRAM_SKB_CB(skb) ((struct vsock_dgram_skb_cb *)((skb)->cb))
+
 struct vsock_sock {
 	/* sk must be the first member. */
 	struct sock sk;
@@ -43,6 +50,7 @@ struct vsock_sock {
 					 * cached peer?
 					 */
 	u32 cached_peer;  /* Context ID of last dgram destination check. */
+	bool dgram_peer_is_vmci_self;	/* Wildcard connect chose VMCI self-send. */
 	const struct cred *owner;
 	/* Rest are SOCK_STREAM only. */
 	long connect_timeout;
@@ -97,8 +105,8 @@ struct vsock_transport_send_notify_data {
 #define VSOCK_TRANSPORT_F_H2G		0x00000001
 /* Transport provides guest->host communication */
 #define VSOCK_TRANSPORT_F_G2H		0x00000002
-/* Transport provides DGRAM communication */
-#define VSOCK_TRANSPORT_F_DGRAM		0x00000004
+/* Transport provides fallback DGRAM communication and owns its endpoint */
+#define VSOCK_TRANSPORT_F_DGRAM_FALLBACK	0x00000004
 /* Transport provides local (loopback) communication */
 #define VSOCK_TRANSPORT_F_LOCAL		0x00000008
 
@@ -118,13 +126,15 @@ struct vsock_transport {
 
 	/* DGRAM. */
 	int (*dgram_bind)(struct vsock_sock *, struct sockaddr_vm *);
-	int (*dgram_dequeue)(struct vsock_sock *vsk, struct msghdr *msg,
-			     size_t len, int flags);
-	int (*dgram_enqueue)(struct vsock_sock *, struct sockaddr_vm *,
-			     struct msghdr *, size_t len);
+	int (*dgram_enqueue)(struct vsock_sock *vsk,
+			     const struct vsock_transport *transport,
+			     struct sockaddr_vm *remote_addr,
+			     struct msghdr *msg, size_t len);
 	bool (*dgram_allow)(struct vsock_sock *vsk, u32 cid, u32 port);
-	/* Optional payload length override, called with the receive queue locked. */
-	size_t (*dgram_payload_len)(const struct sk_buff *skb);
+	/* A fallback transport can share its datagram sockets with routed ones. */
+	bool dgram_fallback;
+	/* Optional: another transport can use this socket's datagram state. */
+	bool (*dgram_transport_match)(const struct vsock_transport *transport);
 
 	/* STREAM. */
 	/* TODO: stream_bind() */
@@ -222,6 +232,7 @@ void vsock_enqueue_accept(struct sock *listener, struct sock *connected);
 void vsock_pending_to_accept(struct sock *listener, struct sock *pending);
 void vsock_insert_connected(struct vsock_sock *vsk);
 int vsock_bind_common(struct vsock_sock *vsk, struct sockaddr_vm *addr);
+void vsock_unbind_common(struct vsock_sock *vsk);
 void vsock_remove_bound(struct vsock_sock *vsk);
 void vsock_remove_connected(struct vsock_sock *vsk);
 struct sock *vsock_find_bound_socket(struct sockaddr_vm *addr);
@@ -241,6 +252,9 @@ void vsock_remove_sock(struct vsock_sock *vsk);
 void vsock_for_each_connected_socket(struct vsock_transport *transport,
 				     void (*fn)(struct sock *sk));
 int vsock_assign_transport(struct vsock_sock *vsk, struct vsock_sock *psk);
+const struct vsock_transport *
+vsock_dgram_get_transport(struct vsock_sock *vsk,
+			  struct sockaddr_vm *remote_addr, bool vmci_self);
 bool vsock_find_cid(unsigned int cid);
 void vsock_linger(struct sock *sk);
 
