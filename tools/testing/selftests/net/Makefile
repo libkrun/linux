@@ -171,6 +171,8 @@ TEST_GEN_FILES := \
 	tcp_mmap \
 	tfo \
 	timestamping \
+	tsi_udp_server \
+	tsi_control_server \
 	txring_overwrite \
 	txtimestamp \
 	udpgso \
@@ -199,10 +201,21 @@ TEST_GEN_PROGS := \
 	tap \
 	tcp_port_share \
 	tls \
+	tsi_accept \
+	tsi_listen \
+	tsi_stream \
+	tsi_udp \
+	tsi_control \
+	tsi_control_fault \
+	tsi_sockopt \
+	tsi_connect \
+	tsi_udp_bind \
+	tsi_tcp_restart \
 	udp_splice_checksum \
 # end of TEST_GEN_PROGS
 
 TEST_FILES := \
+	tsi_tcp_restart_server.py \
 	fcnal-test.sh \
 	in_netns.sh \
 	lib.sh \
@@ -240,6 +253,21 @@ $(OUTPUT)/epoll_busy_poll: LDLIBS += -lcap
 $(OUTPUT)/reuseport_bpf_numa: LDLIBS += -lnuma
 $(OUTPUT)/tcp_mmap: LDLIBS += -lpthread -lcrypto
 $(OUTPUT)/tcp_inq: LDLIBS += -lpthread
+$(OUTPUT)/tsi_stream: LDLIBS += -lpthread
+$(OUTPUT)/tsi_accept: LDLIBS += -lpthread
+$(OUTPUT)/tsi_listen: LDLIBS += -lpthread
+$(OUTPUT)/tsi_udp: LDLIBS += -lpthread
+$(OUTPUT)/tsi_control: LDLIBS += -lpthread
+$(OUTPUT)/tsi_control_fault: LDLIBS += -lpthread
+$(OUTPUT)/tsi_stream $(OUTPUT)/tsi_accept $(OUTPUT)/tsi_listen: tsi_test.h
+$(OUTPUT)/tsi_udp: tsi_test.h
+$(OUTPUT)/tsi_control: tsi_test.h
+$(OUTPUT)/tsi_control_fault: tsi_test.h
+$(OUTPUT)/tsi_sockopt: tsi_test.h
+$(OUTPUT)/tsi_connect: tsi_test.h
+$(OUTPUT)/tsi_udp_bind: tsi_test.h
+$(OUTPUT)/tsi_tcp_restart: tsi_test.h
+$(OUTPUT)/tsi_tcp_restart: LDLIBS += -lpthread
 $(OUTPUT)/bind_bhash: LDLIBS += -lpthread
 $(OUTPUT)/io_uring_zerocopy_tx: CFLAGS += -I../../../include/
 

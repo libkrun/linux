@@ -220,6 +220,9 @@ static const char * const pf_family_names[] = {
 	[PF_SMC]	= "PF_SMC",
 	[PF_XDP]	= "PF_XDP",
 	[PF_MCTP]	= "PF_MCTP",
+	[PF_TSI]	= "PF_TSI",
+	[PF_TSI6]	= "PF_TSI6",
+	[PF_TSIU]	= "PF_TSIU",
 };
 
 /*
@@ -2480,7 +2483,8 @@ int do_sock_getsockopt(struct socket *sock, bool compat, int level,
 		copy_from_sockptr(&max_optlen, optlen, sizeof(int));
 
 	ops = READ_ONCE(sock->ops);
-	if (level == SOL_SOCKET) {
+	if (level == SOL_SOCKET &&
+	    !test_bit(SOCK_CUSTOM_GETSOCKOPT, &sock->flags)) {
 		err = sk_getsockopt(sock->sk, level, optname, optval, optlen);
 	} else if (ops->getsockopt_iter) {
 		err = sockptr_to_sockopt(&opt, optval, optlen, &kvec);
