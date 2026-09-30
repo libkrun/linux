@@ -118,6 +118,11 @@ unsigned int sysctl_net_busy_read __read_mostly;
 unsigned int sysctl_net_busy_poll __read_mostly;
 #endif
 
+#ifdef CONFIG_TSI
+bool tsi_hijack = false;
+bool tsi_hijack_unix = false;
+#endif
+
 static ssize_t sock_read_iter(struct kiocb *iocb, struct iov_iter *to);
 static ssize_t sock_write_iter(struct kiocb *iocb, struct iov_iter *from);
 static int sock_mmap(struct file *file, struct vm_area_struct *vma);
@@ -1590,6 +1595,11 @@ call_kill:
 }
 EXPORT_SYMBOL(sock_wake_async);
 
+#ifdef CONFIG_TSI
+core_param(tsi_hijack, tsi_hijack, bool, 0644);
+core_param(tsi_hijack_unix, tsi_hijack_unix, bool, 0644);
+#endif
+
 /**
  *	__sock_create - creates a socket
  *	@net: net namespace
@@ -1658,6 +1668,24 @@ int __sock_create(struct net *net, int family, int type, int protocol,
 	 */
 	if (rcu_access_pointer(net_families[family]) == NULL)
 		request_module("net-pf-%d", family);
+#endif
+
+#ifdef CONFIG_TSI
+	if (!kern && (type == SOCK_STREAM || type == SOCK_DGRAM)) {
+		if (family == AF_INET && tsi_hijack) {
+			pr_debug("%s - tsi: hijacking AF_INET socket\n",
+				current->comm);
+			family = AF_TSI;
+		} else if (family == AF_INET6 && tsi_hijack) {
+			pr_debug("%s - tsi: hijacking AF_INET6 socket\n",
+				current->comm);
+			family = AF_TSI6;
+		} else if (family == AF_UNIX && tsi_hijack_unix) {
+			pr_debug("%s - tsi: hijacking AF_UNIX socket\n",
+				current->comm);
+			family = AF_TSIU;
+		}
+	}
 #endif
 
 	rcu_read_lock();
