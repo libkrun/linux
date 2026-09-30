@@ -123,6 +123,7 @@ Contents:
    timestamping
    tipc
    tproxy
+   tsi
    tuntap
    udplite
    vrf
