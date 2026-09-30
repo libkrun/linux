@@ -622,7 +622,12 @@ int vsock_assign_transport(struct vsock_sock *vsk, struct vsock_sock *psk)
 
 	switch (sk->sk_type) {
 	case SOCK_DGRAM:
-		new_transport = transport_dgram;
+		if (transport_dgram)
+			new_transport = transport_dgram;
+		else if (transport_g2h)
+			new_transport = transport_g2h;
+		else
+			new_transport = transport_h2g;
 		break;
 	case SOCK_STREAM:
 	case SOCK_SEQPACKET:
@@ -691,6 +696,14 @@ int vsock_assign_transport(struct vsock_sock *vsk, struct vsock_sock *psk)
 	if (sk->sk_type == SOCK_SEQPACKET) {
 		if (!new_transport->seqpacket_allow ||
 		    !new_transport->seqpacket_allow(vsk, remote_cid)) {
+			module_put(new_transport->module);
+			return -ESOCKTNOSUPPORT;
+		}
+	}
+
+	if (sk->sk_type == SOCK_DGRAM && new_transport != transport_dgram) {
+		if (!new_transport->dgram_allow ||
+		    !new_transport->dgram_allow(vsk, 0, 0)) {
 			module_put(new_transport->module);
 			return -ESOCKTNOSUPPORT;
 		}
@@ -888,12 +901,6 @@ static int __vsock_bind_connectible(struct vsock_sock *vsk,
 	return 0;
 }
 
-static int __vsock_bind_dgram(struct vsock_sock *vsk,
-			      struct sockaddr_vm *addr)
-{
-	return vsk->transport->dgram_bind(vsk, addr);
-}
-
 static int __vsock_bind(struct sock *sk, struct sockaddr_vm *addr)
 {
 	struct vsock_sock *vsk = vsock_sk(sk);
@@ -914,13 +921,10 @@ static int __vsock_bind(struct sock *sk, struct sockaddr_vm *addr)
 	switch (sk->sk_socket->type) {
 	case SOCK_STREAM:
 	case SOCK_SEQPACKET:
+	case SOCK_DGRAM:
 		spin_lock_bh(&vsock_table_lock);
 		retval = __vsock_bind_connectible(vsk, addr);
 		spin_unlock_bh(&vsock_table_lock);
-		break;
-
-	case SOCK_DGRAM:
-		retval = __vsock_bind_dgram(vsk, addr);
 		break;
 
 	default:
@@ -1027,7 +1031,7 @@ static void __vsock_release(struct sock *sk, int level)
 
 	if (vsk->transport)
 		vsk->transport->release(vsk);
-	else if (sock_type_connectible(sk->sk_type))
+	else
 		vsock_remove_sock(vsk);
 
 	sock_orphan(sk);
@@ -1604,10 +1608,17 @@ static int vsock_do_ioctl(struct socket *sock, unsigned int cmd,
 			break;
 		}
 
-		n_bytes = vsock_stream_has_data(vsk);
-		if (n_bytes < 0) {
-			ret = n_bytes;
-			break;
+		if (sk->sk_type == SOCK_DGRAM) {
+			struct sk_buff *skb;
+
+			skb = skb_peek(&sk->sk_receive_queue);
+			n_bytes = skb ? skb->len : 0;
+		} else {
+			n_bytes = vsock_stream_has_data(vsk);
+			if (n_bytes < 0) {
+				ret = n_bytes;
+				break;
+			}
 		}
 		ret = put_user(n_bytes, arg);
 		break;
