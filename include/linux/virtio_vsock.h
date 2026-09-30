@@ -12,6 +12,8 @@
 struct virtio_vsock_skb_cb {
 	bool reply;
 	bool tap_delivered;
+	/* Datagram payload is still charged to bytes_unsent. */
+	bool tx_accounted;
 	u32 offset;
 };
 
