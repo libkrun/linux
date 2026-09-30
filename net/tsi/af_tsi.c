@@ -547,7 +547,7 @@ static int tsi_accept(struct socket *sock, struct socket *newsock,
 	struct socket *csocket;
 	struct tsi_sock *tsk;
 	struct tsi_sock *newtsk;
-	struct socket *nsock;
+	struct socket *nsock = NULL;
 	struct sock *sk;
 	int err;
 
