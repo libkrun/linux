@@ -136,6 +136,7 @@
 #include <linux/types.h>
 #include <linux/bitops.h>
 #include <linux/cred.h>
+#include <linux/err.h>
 #include <linux/errqueue.h>
 #include <linux/init.h>
 #include <linux/io.h>
@@ -599,6 +600,7 @@ static void vsock_deassign_transport(struct vsock_sock *vsk)
 int vsock_assign_transport(struct vsock_sock *vsk, struct vsock_sock *psk)
 {
 	const struct vsock_transport *new_transport;
+	const struct vsock_transport *fallback_transport = NULL;
 	struct sock *sk = sk_vsock(vsk);
 	unsigned int remote_cid = vsk->remote_addr.svm_cid;
 	__u8 remote_flags;
@@ -622,7 +624,12 @@ int vsock_assign_transport(struct vsock_sock *vsk, struct vsock_sock *psk)
 
 	switch (sk->sk_type) {
 	case SOCK_DGRAM:
-		new_transport = transport_dgram;
+		if (transport_dgram)
+			new_transport = transport_dgram;
+		else if (transport_g2h)
+			new_transport = transport_g2h;
+		else
+			new_transport = transport_h2g;
 		break;
 	case SOCK_STREAM:
 	case SOCK_SEQPACKET:
@@ -661,6 +668,11 @@ int vsock_assign_transport(struct vsock_sock *vsk, struct vsock_sock *psk)
 		ret = -ENODEV;
 		goto err;
 	}
+	if (sk->sk_type == SOCK_DGRAM && !transport_dgram &&
+	    new_transport == transport_g2h && transport_h2g &&
+	    transport_h2g != new_transport &&
+	    try_module_get(transport_h2g->module))
+		fallback_transport = transport_h2g;
 
 	/* It's safe to release the mutex after a successful try_module_get().
 	 * Whichever transport `new_transport` points at, it won't go away until
@@ -697,6 +709,14 @@ int vsock_assign_transport(struct vsock_sock *vsk, struct vsock_sock *psk)
 	}
 
 	ret = new_transport->init(vsk, psk);
+	if (ret == -ESOCKTNOSUPPORT && fallback_transport) {
+		module_put(new_transport->module);
+		new_transport = fallback_transport;
+		fallback_transport = NULL;
+		ret = new_transport->init(vsk, psk);
+	}
+	if (fallback_transport)
+		module_put(fallback_transport->module);
 	if (ret) {
 		module_put(new_transport->module);
 		return ret;
@@ -710,6 +730,98 @@ err:
 	return ret;
 }
 EXPORT_SYMBOL_GPL(vsock_assign_transport);
+
+/**
+ * vsock_dgram_get_transport - select a transport for a datagram destination
+ * @vsk: socket whose datagram state will be used
+ * @remote_addr: destination address
+ *
+ * The caller must hold the socket lock and release the returned transport's
+ * module reference after use. Dedicated datagram transports retain their
+ * original selection; compatible transports share the socket's existing state.
+ * Parent fallback sets VMADDR_FLAG_TO_HOST to preserve that route on connect.
+ *
+ * Return: a referenced transport or an ERR_PTR on failure.
+ */
+const struct vsock_transport *
+vsock_dgram_get_transport(struct vsock_sock *vsk,
+			  struct sockaddr_vm *remote_addr)
+{
+	const struct vsock_transport *owner = vsk->transport;
+	const struct vsock_transport *transport;
+	struct sock *sk = sk_vsock(vsk);
+	u32 cid = remote_addr->svm_cid;
+	u32 local_cid;
+	bool to_host = false;
+	int err = -ENODEV;
+
+	if (!owner)
+		return ERR_PTR(-ENODEV);
+
+	mutex_lock(&vsock_register_mutex);
+	if (!owner->dgram_transport_match) {
+		transport = owner;
+	} else if (vsock_use_local_transport(cid)) {
+		transport = transport_local;
+	} else if (cid <= VMADDR_CID_HOST ||
+		   (remote_addr->svm_flags & VMADDR_FLAG_TO_HOST)) {
+		transport = transport_g2h;
+	} else if (transport_h2g &&
+		   (!transport_h2g->has_remote_cid ||
+		    transport_h2g->has_remote_cid(vsk, cid))) {
+		transport = transport_h2g;
+	} else if (sock_net(sk)->vsock.g2h_fallback && transport_g2h &&
+		   transport_g2h->has_remote_cid &&
+		   transport_g2h->has_remote_cid(vsk, cid)) {
+		transport = transport_g2h;
+		to_host = true;
+	} else {
+		transport = transport_h2g;
+	}
+
+	if (!transport)
+		goto out;
+	if (owner->dgram_transport_match &&
+	    !owner->dgram_transport_match(transport)) {
+		err = -ESOCKTNOSUPPORT;
+		goto out;
+	}
+	/* Loopback source addresses must route replies back to loopback. */
+	if (owner->dgram_transport_match && transport == transport_local &&
+	    vsk->local_addr.svm_cid != VMADDR_CID_ANY &&
+	    !vsock_use_local_transport(vsk->local_addr.svm_cid)) {
+		err = -EADDRNOTAVAIL;
+		goto out;
+	}
+	if (!try_module_get(transport->module))
+		goto out;
+	mutex_unlock(&vsock_register_mutex);
+
+	if (owner->dgram_transport_match) {
+		local_cid = transport->get_local_cid();
+		if (vsk->local_addr.svm_cid != VMADDR_CID_ANY &&
+		    local_cid != VMADDR_CID_LOCAL &&
+		    vsk->local_addr.svm_cid != local_cid) {
+			err = -EADDRNOTAVAIL;
+			goto put_transport;
+		}
+	}
+	if (!transport->dgram_allow(vsk, cid, remote_addr->svm_port)) {
+		err = -EINVAL;
+		goto put_transport;
+	}
+	if (to_host)
+		remote_addr->svm_flags |= VMADDR_FLAG_TO_HOST;
+	return transport;
+
+put_transport:
+	module_put(transport->module);
+	return ERR_PTR(err);
+out:
+	mutex_unlock(&vsock_register_mutex);
+	return ERR_PTR(err);
+}
+EXPORT_SYMBOL_GPL(vsock_dgram_get_transport);
 
 /*
  * Provide safe access to static transport_{h2g,g2h,dgram,local} callbacks.
@@ -1039,7 +1151,7 @@ static void __vsock_release(struct sock *sk, int level)
 
 	if (vsk->transport)
 		vsk->transport->release(vsk);
-	else if (sock_type_connectible(sk->sk_type))
+	else
 		vsock_remove_sock(vsk);
 
 	sock_orphan(sk);
@@ -1482,7 +1594,8 @@ static int vsock_dgram_sendmsg(struct socket *sock, struct msghdr *msg,
 		 */
 
 		if (remote_addr->svm_cid == VMADDR_CID_ANY)
-			remote_addr->svm_cid = transport->get_local_cid();
+			remote_addr->svm_cid = transport->dgram_transport_match ?
+				VMADDR_CID_LOCAL : transport->get_local_cid();
 
 		if (!vsock_addr_bound(remote_addr)) {
 			err = -EINVAL;
@@ -1492,7 +1605,8 @@ static int vsock_dgram_sendmsg(struct socket *sock, struct msghdr *msg,
 		remote_addr = &vsk->remote_addr;
 
 		if (remote_addr->svm_cid == VMADDR_CID_ANY)
-			remote_addr->svm_cid = transport->get_local_cid();
+			remote_addr->svm_cid = transport->dgram_transport_match ?
+				VMADDR_CID_LOCAL : transport->get_local_cid();
 
 		/* XXX Should connect() or this function ensure remote_addr is
 		 * bound?
@@ -1506,13 +1620,14 @@ static int vsock_dgram_sendmsg(struct socket *sock, struct msghdr *msg,
 		goto out;
 	}
 
-	if (!transport->dgram_allow(vsk, remote_addr->svm_cid,
-				    remote_addr->svm_port)) {
-		err = -EINVAL;
+	transport = vsock_dgram_get_transport(vsk, remote_addr);
+	if (IS_ERR(transport)) {
+		err = PTR_ERR(transport);
 		goto out;
 	}
 
-	err = transport->dgram_enqueue(vsk, remote_addr, msg, len);
+	err = transport->dgram_enqueue(vsk, transport, remote_addr, msg, len);
+	module_put(transport->module);
 
 out:
 	release_sock(sk);
@@ -1526,6 +1641,7 @@ static int vsock_dgram_connect(struct socket *sock,
 	struct sock *sk;
 	struct vsock_sock *vsk;
 	struct sockaddr_vm *remote_addr;
+	const struct vsock_transport *transport;
 
 	sk = sock->sk;
 	vsk = vsock_sk(sk);
@@ -1547,11 +1663,16 @@ static int vsock_dgram_connect(struct socket *sock,
 	if (err)
 		goto out;
 
-	if (!vsk->transport->dgram_allow(vsk, remote_addr->svm_cid,
-					 remote_addr->svm_port)) {
-		err = -EINVAL;
+	if (remote_addr->svm_cid == VMADDR_CID_ANY &&
+	    vsk->transport->dgram_transport_match)
+		remote_addr->svm_cid = VMADDR_CID_LOCAL;
+
+	transport = vsock_dgram_get_transport(vsk, remote_addr);
+	if (IS_ERR(transport)) {
+		err = PTR_ERR(transport);
 		goto out;
 	}
+	module_put(transport->module);
 
 	memcpy(&vsk->remote_addr, remote_addr, sizeof(vsk->remote_addr));
 	sock->state = SS_CONNECTED;

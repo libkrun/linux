@@ -585,6 +585,7 @@ static struct virtio_transport virtio_transport = {
 		.dgram_dequeue            = virtio_transport_dgram_dequeue,
 		.dgram_enqueue            = virtio_transport_dgram_enqueue,
 		.dgram_allow              = virtio_transport_dgram_allow_check,
+		.dgram_transport_match    = virtio_transport_dgram_transport_match,
 
 		.stream_dequeue           = virtio_transport_stream_dequeue,
 		.stream_enqueue           = virtio_transport_stream_enqueue,

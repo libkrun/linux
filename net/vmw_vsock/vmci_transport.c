@@ -1723,6 +1723,7 @@ static int vmci_transport_dgram_bind(struct vsock_sock *vsk,
 
 static int vmci_transport_dgram_enqueue(
 	struct vsock_sock *vsk,
+	const struct vsock_transport *transport,
 	struct sockaddr_vm *remote_addr,
 	struct msghdr *msg,
 	size_t len)

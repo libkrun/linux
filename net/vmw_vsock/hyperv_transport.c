@@ -443,6 +443,9 @@ static int hvs_sock_init(struct vsock_sock *vsk, struct vsock_sock *psk)
 	struct hvsock *hvs;
 	struct sock *sk = sk_vsock(vsk);
 
+	if (sk->sk_type == SOCK_DGRAM)
+		return -ESOCKTNOSUPPORT;
+
 	hvs = kzalloc_obj(*hvs);
 	if (!hvs)
 		return -ENOMEM;
@@ -563,6 +566,7 @@ static int hvs_dgram_dequeue(struct vsock_sock *vsk, struct msghdr *msg,
 }
 
 static int hvs_dgram_enqueue(struct vsock_sock *vsk,
+			     const struct vsock_transport *transport,
 			     struct sockaddr_vm *remote, struct msghdr *msg,
 			     size_t dgram_len)
 {

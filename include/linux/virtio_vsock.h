@@ -14,6 +14,7 @@ struct virtio_vsock_skb_cb {
 	bool tap_delivered;
 	/* Datagram payload is still charged to bytes_unsent. */
 	bool tx_accounted;
+	bool to_host;
 	u32 offset;
 };
 
@@ -173,6 +174,7 @@ struct virtio_vsock_sock {
 
 struct virtio_vsock_pkt_info {
 	u32 remote_cid, remote_port;
+	const struct virtio_transport *t_ops;
 	struct vsock_sock *vsk;
 	struct msghdr *msg;
 	struct net *net;
@@ -263,6 +265,7 @@ bool virtio_transport_stream_allow(struct vsock_sock *vsk, u32 cid, u32 port);
 int virtio_transport_dgram_bind(struct vsock_sock *vsk,
 				struct sockaddr_vm *addr);
 bool virtio_transport_dgram_allow(struct vsock_sock *vsk, u32 cid, u32 port);
+bool virtio_transport_dgram_transport_match(const struct vsock_transport *t);
 
 int virtio_transport_connect(struct vsock_sock *vsk);
 
@@ -276,6 +279,7 @@ virtio_transport_stream_enqueue(struct vsock_sock *vsk,
 				size_t len);
 int
 virtio_transport_dgram_enqueue(struct vsock_sock *vsk,
+			       const struct vsock_transport *transport,
 			       struct sockaddr_vm *remote_addr,
 			       struct msghdr *msg,
 			       size_t len);

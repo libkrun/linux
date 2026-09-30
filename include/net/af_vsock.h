@@ -120,9 +120,13 @@ struct vsock_transport {
 	int (*dgram_bind)(struct vsock_sock *, struct sockaddr_vm *);
 	int (*dgram_dequeue)(struct vsock_sock *vsk, struct msghdr *msg,
 			     size_t len, int flags);
-	int (*dgram_enqueue)(struct vsock_sock *, struct sockaddr_vm *,
-			     struct msghdr *, size_t len);
+	int (*dgram_enqueue)(struct vsock_sock *vsk,
+			     const struct vsock_transport *transport,
+			     struct sockaddr_vm *remote_addr,
+			     struct msghdr *msg, size_t len);
 	bool (*dgram_allow)(struct vsock_sock *vsk, u32 cid, u32 port);
+	/* Optional: another transport can use this socket's datagram state. */
+	bool (*dgram_transport_match)(const struct vsock_transport *transport);
 	/* Optional payload length override, called with the receive queue locked. */
 	size_t (*dgram_payload_len)(const struct sk_buff *skb);
 
@@ -239,6 +243,9 @@ void vsock_remove_sock(struct vsock_sock *vsk);
 void vsock_for_each_connected_socket(struct vsock_transport *transport,
 				     void (*fn)(struct sock *sk));
 int vsock_assign_transport(struct vsock_sock *vsk, struct vsock_sock *psk);
+const struct vsock_transport *
+vsock_dgram_get_transport(struct vsock_sock *vsk,
+			  struct sockaddr_vm *remote_addr);
 bool vsock_find_cid(unsigned int cid);
 void vsock_linger(struct sock *sk);
 
