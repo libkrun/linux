@@ -74,3 +74,30 @@ This is especially important if the virtqueue becomes full since it is then
 impossible to add high priority requests.  In order to address this difference,
 the virtio-fs device uses a "hiprio" virtqueue specifically for requests that
 have priority over normal requests.
+
+Synchronous request queues
+--------------------------
+
+The experimental ``VIRTIO_FS_F_SYNC`` feature (bit 1) adds synchronous request
+queues without changing the hiprio and normal request queues.  When this feature
+is negotiated, the device configuration includes a ``le32 num_sync_queues`` field
+immediately after ``num_request_queues``.  The device must advertise at least one
+synchronous queue.
+
+Queue 0 remains the hiprio queue and queues 1 through ``num_request_queues``
+remain normal request queues.  Synchronous queue ``i`` has index
+``1 + num_request_queues + i`` and is associated with guest CPU ``i``.  The driver
+uses at most ``nr_cpu_ids`` synchronous queues.  Non-background requests use the
+current CPU's synchronous queue when it exists; other requests use the normal
+request queue mapping.  FORGET requests always use the hiprio queue.
+
+The device must complete requests on a synchronous queue and publish the used
+buffers before returning from a queue notification.  This allows the host to
+execute the request in the notifying vCPU thread and the guest to process the
+completion immediately.  The driver always notifies synchronous queues,
+regardless of event suppression.  The queue identifies synchronous requests;
+the FUSE request header retains its original layout and padding.
+
+Without ``VIRTIO_FS_F_SYNC``, the driver does not read ``num_sync_queues`` or
+initialize synchronous queues, and retains the original queue routing and
+completion handling.

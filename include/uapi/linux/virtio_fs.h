@@ -8,12 +8,18 @@
 #include <linux/virtio_config.h>
 #include <linux/virtio_types.h>
 
+/* Synchronous request queues (bit 0 is reserved for notifications). */
+#define VIRTIO_FS_F_SYNC 1
+
 struct virtio_fs_config {
 	/* Filesystem name (UTF-8, not NUL-terminated, padded with NULs) */
 	__u8 tag[36];
 
 	/* Number of request queues */
 	__le32 num_request_queues;
+
+	/* Number of per-CPU synchronous queues, if VIRTIO_FS_F_SYNC */
+	__le32 num_sync_queues;
 } __attribute__((packed));
 
 /* For the id field in virtio_pci_shm_cap */
