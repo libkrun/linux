@@ -51,6 +51,10 @@ struct test_opts {
 	enum test_mode mode;
 	unsigned int peer_cid;
 	unsigned int peer_port;
+	unsigned int bind_cid;
+	bool local;
+	bool to_host;
+	bool expect_to_host;
 };
 
 /* A test case definition.  Test functions must print failures to stderr and
@@ -66,6 +70,12 @@ struct test_case {
 	void (*run_server)(const struct test_opts *opts);
 
 	bool skip;
+	bool local; /* Can run without a control connection */
+
+	/* Return a skip reason or NULL after the selection barrier. Checks
+	 * that coordinate over the control channel must agree on both peers.
+	 */
+	const char *(*check)(const struct test_opts *opts);
 };
 
 void init_signals(void);

@@ -27,6 +27,7 @@
 #include <linux/sockios.h>
 
 #include "vsock_test_zerocopy.h"
+#include "vsock_test_dgram.h"
 #include "timeout.h"
 #include "control.h"
 #include "util.h"
@@ -2633,6 +2634,96 @@ static struct test_case test_cases[] = {
 		.run_client = test_stream_collapse_client,
 		.run_server = test_stream_collapse_server,
 	},
+	{
+		.name = "SOCK_DGRAM autobind, duplicate bind and wildcard destination",
+		.run_client = test_dgram_bind,
+		.run_server = test_dgram_bind,
+		.check = vsock_dgram_check_local,
+		.local = true,
+	},
+	{
+		.name = "SOCK_DGRAM queue ioctls, poll, peek, truncation and empty messages",
+		.run_client = test_dgram_receive,
+		.run_server = test_dgram_receive,
+		.check = vsock_dgram_check_local,
+		.local = true,
+	},
+	{
+		.name = "SOCK_DGRAM unsupported receive flags preserve normal data",
+		.run_client = test_dgram_receive_flags,
+		.run_server = test_dgram_receive_flags,
+		.check = vsock_dgram_check_local,
+		.local = true,
+	},
+	{
+		.name = "SOCK_DGRAM socket filter trims receive length",
+		.run_client = test_dgram_filter,
+		.run_server = test_dgram_filter,
+		.check = vsock_dgram_check_local,
+		.local = true,
+	},
+	{
+		.name = "SOCK_DGRAM connect, disconnect and shutdown peer filtering",
+		.run_client = test_dgram_connect,
+		.run_server = test_dgram_connect,
+		.check = vsock_dgram_check_local,
+		.local = true,
+	},
+	{
+		.name = "SOCK_DGRAM explicit loopback source CIDs and reply addresses",
+		.run_client = test_dgram_source_cid,
+		.run_server = test_dgram_source_cid,
+		.check = vsock_dgram_check_local,
+		.local = true,
+	},
+	{
+		.name = "SOCK_DGRAM connected stream/seqpacket cannot shadow datagrams",
+		.run_client = test_dgram_bound_lookup,
+		.run_server = test_dgram_bound_lookup,
+		.check = vsock_dgram_check_local,
+		.local = true,
+	},
+	{
+		.name = "SOCK_DGRAM sockmap and sockhash reject datagrams (BPF privileges)",
+		.run_client = test_dgram_sockmap,
+		.run_server = test_dgram_sockmap,
+		.skip = true,
+		.check = vsock_dgram_check_local,
+		.local = true,
+	},
+	{
+		.name = "SOCK_DGRAM nested CID_HOST loopback rejection (nested VM only)",
+		.run_client = test_dgram_nested_source,
+		.run_server = test_dgram_nested_source,
+		.skip = true,
+		.check = vsock_dgram_check_local,
+		.local = true,
+	},
+	{
+		.name = "SOCK_DGRAM bidirectional sizes, 64 KiB boundaries and RX refill",
+		.run_client = test_dgram_sizes,
+		.run_server = test_dgram_sizes,
+		.check = vsock_dgram_check_peer,
+	},
+	{
+		.name = "SOCK_DGRAM connected socket alternates loopback and peer routes",
+		.run_client = test_dgram_routes,
+		.run_server = test_dgram_routes,
+		.check = vsock_dgram_check_routes,
+	},
+	{
+		.name = "SOCK_DGRAM peer filtering and disconnect across transports",
+		.run_client = test_dgram_peer_filter,
+		.run_server = test_dgram_peer_filter,
+		.check = vsock_dgram_check_peer,
+	},
+	{
+		.name = "SOCK_DGRAM VMCI ioctl(SIOCINQ) payload length",
+		.run_client = test_dgram_vmci_inq,
+		.run_server = test_dgram_vmci_inq,
+		.check = vsock_dgram_check_vmci,
+		.local = true,
+	},
 	{},
 };
 
@@ -2679,6 +2770,26 @@ static const struct option longopts[] = {
 		.val = 't',
 	},
 	{
+		.name = "local",
+		.has_arg = no_argument,
+		.val = 'L',
+	},
+	{
+		.name = "bind-cid",
+		.has_arg = required_argument,
+		.val = 'b',
+	},
+	{
+		.name = "to-host",
+		.has_arg = no_argument,
+		.val = 'T',
+	},
+	{
+		.name = "expect-to-host",
+		.has_arg = no_argument,
+		.val = 'E',
+	},
+	{
 		.name = "help",
 		.has_arg = no_argument,
 		.val = '?',
@@ -2693,8 +2804,10 @@ static void usage(void)
 		"  Server: vsock_test --control-port=1234 --mode=server --peer-cid=3\n"
 		"  Client: vsock_test --control-host=192.168.0.1 --control-port=1234 --mode=client --peer-cid=2\n"
 		"\n"
-		"Run vsock.ko tests.  Must be launched in both guest\n"
-		"and host.  One side must use --mode=client and\n"
+		"  Local: vsock_test --local [--pick=<test_id>]\n"
+		"\n"
+		"Run vsock.ko tests. Paired tests must be launched in both guest\n"
+		"and host. One side must use --mode=client and\n"
 		"the other side must use --mode=server.\n"
 		"\n"
 		"A TCP control socket connection is used to coordinate tests\n"
@@ -2707,8 +2820,14 @@ static void usage(void)
 		"specified with --peer-port=<port> (or the default port)\n"
 		"and the next one.\n"
 		"\n"
+		"--local runs local datagram cases without a control connection.\n"
+		"\n"
 		"Options:\n"
 		"  --help                 This help message\n"
+		"  --local                Run local datagram cases without a peer\n"
+		"  --bind-cid <cid>       Source CID for peer datagram tests [default: ANY]\n"
+		"  --to-host              Route peer datagrams through the frontend\n"
+		"  --expect-to-host       Expect the upstream datagram source flag\n"
 		"  --control-host <host>  Server IP address to connect to\n"
 		"  --control-port <port>  Server port to listen on/connect to\n"
 		"  --mode client|server   Server or client mode\n"
@@ -2732,7 +2851,10 @@ int main(int argc, char **argv)
 		.mode = TEST_MODE_UNSET,
 		.peer_cid = VMADDR_CID_ANY,
 		.peer_port = DEFAULT_PEER_PORT,
+		.bind_cid = VMADDR_CID_ANY,
 	};
+	bool picked = false;
+	size_t i;
 
 	srand(time(NULL));
 	init_signals();
@@ -2744,6 +2866,18 @@ int main(int argc, char **argv)
 			break;
 
 		switch (opt) {
+		case 'L':
+			opts.local = true;
+			break;
+		case 'b':
+			opts.bind_cid = parse_cid(optarg);
+			break;
+		case 'T':
+			opts.to_host = true;
+			break;
+		case 'E':
+			opts.expect_to_host = true;
+			break;
 		case 'H':
 			control_host = optarg;
 			break;
@@ -2776,6 +2910,7 @@ int main(int argc, char **argv)
 		case 't':
 			pick_test(test_cases, ARRAY_SIZE(test_cases) - 1,
 				  optarg);
+			picked = true;
 			break;
 		case '?':
 		default:
@@ -2783,6 +2918,22 @@ int main(int argc, char **argv)
 		}
 	}
 
+	if (optind != argc)
+		usage();
+	if (opts.local) {
+		if (opts.mode != TEST_MODE_UNSET || control_host || control_port)
+			usage();
+		if (picked) {
+			for (i = 0; test_cases[i].name; i++) {
+				if (!test_cases[i].skip && !test_cases[i].local) {
+					fprintf(stderr, "test %zu requires paired mode\n", i);
+					exit(EXIT_FAILURE);
+				}
+			}
+		}
+		run_tests(test_cases, &opts);
+		return EXIT_SUCCESS;
+	}
 	if (!control_port)
 		usage();
 	if (opts.mode == TEST_MODE_UNSET)
