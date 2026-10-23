@@ -490,46 +490,54 @@ void run_tests(const struct test_case *test_cases,
 	int i;
 
 	for (i = 0; test_cases[i].name; i++) {
+		const struct test_case *test = &test_cases[i];
 		void (*run)(const struct test_opts *opts);
+		const char *reason;
 		char *line;
 
-		printf("%d - %s...", i, test_cases[i].name);
+		if (opts->local && !test->local)
+			continue;
+		printf("%d - %s...", i, test->name);
 		fflush(stdout);
 
-		/* Full barrier before executing the next test.  This
-		 * ensures that client and server are executing the
-		 * same test case.  In particular, it means whoever is
-		 * faster will not see the peer still executing the
-		 * last test.  This is important because port numbers
-		 * can be used by multiple test cases.
-		 */
-		if (test_cases[i].skip)
-			control_writeln("SKIP");
-		else
-			control_writeln("NEXT");
-
-		line = control_readln();
-		if (control_cmpln(line, "SKIP", false) || test_cases[i].skip) {
-
-			printf("skipped\n");
-
+		if (opts->local) {
+			if (test->skip) {
+				printf("skipped\n");
+				continue;
+			}
+		} else {
+			/* Agree on explicit selection before any capability check
+			 * or test can exchange messages on the control connection.
+			 */
+			control_writeln(test->skip ? "SKIP" : "NEXT");
+			line = control_readln();
+			if (control_cmpln(line, "SKIP", false) || test->skip) {
+				printf("skipped\n");
+				free(line);
+				continue;
+			}
+			control_cmpln(line, "NEXT", true);
 			free(line);
-			continue;
 		}
 
-		control_cmpln(line, "NEXT", true);
-		free(line);
-
-		if (opts->mode == TEST_MODE_CLIENT)
-			run = test_cases[i].run_client;
+		if (test->check) {
+			reason = test->check(opts);
+			if (reason) {
+				printf("skipped: %s\n", reason);
+				continue;
+			}
+		}
+		if (opts->local || opts->mode == TEST_MODE_CLIENT)
+			run = test->run_client;
 		else
-			run = test_cases[i].run_server;
-
+			run = test->run_server;
 		if (run)
 			run(opts);
-
 		printf("ok\n");
 	}
+
+	if (opts->local)
+		return;
 
 	printf("All tests have been executed. Waiting other peer...");
 	fflush(stdout);

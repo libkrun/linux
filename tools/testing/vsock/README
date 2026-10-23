@@ -5,7 +5,7 @@ Hyper-V.
 
 The following tests are available:
 
-  * vsock_test - core AF_VSOCK socket functionality
+  * vsock_test - stream, seqpacket and datagram functionality
   * vsock_diag_test - vsock_diag.ko module for listing open sockets
 
 The following prerequisite steps are not automated and must be performed prior
@@ -32,7 +32,7 @@ Invoke test binaries in both directions as follows:
                         --control-port=1234 \
                         --peer-cid=2
   (host)# $TEST_BINARY --mode=client \
-                       --control-port=$GUEST_IP \
+                       --control-host=$GUEST_IP \
                        --control-port=1234 \
                        --peer-cid=3
 
@@ -50,6 +50,44 @@ suite run, e.g.
   # cat /sys/kernel/debug/kmemleak
 
 For more information see Documentation/dev-tools/kmemleak.rst.
+
+Datagram tests
+--------------
+vsock_test includes datagram cases in the client/server runs above. Unsupported
+cases print a skip reason.
+
+Virtio/vhost datagrams require kernel support on both sides and a VMM that
+negotiates VIRTIO_VSOCK_F_DGRAM. Load vsock_loopback on both host and guest for
+the ordinary local cases. Make /dev/vsock and a mounted sysfs available. The
+guest probe reads the negotiated virtio features from sysfs before running peer
+cases. VMCI's dedicated datagram transport can coexist with virtio/vhost: it
+owns the datagram endpoint while negotiated directional routes can serve
+individual destinations.
+
+Run only the local datagram cases without a peer or TCP control connection:
+
+  ./vsock_test --local
+
+Use --list and --pick <test_id> to select individual cases. The BPF admission
+test (51, requiring BPF privileges) and nested routing test (52, requiring both
+virtio and vhost transports) need explicit selection. The VMCI queue-length
+test (56) requires VMCI without vsock_loopback, so self-directed traffic uses
+VMCI rather than loopback. It skips when VMCI self-send is unavailable in the
+current vsock namespace.
+The VMCI host route test (57) checks CID_HOST and CID_ANY in a global namespace
+with or without loopback.
+The connected loopback peer test (58) checks same-port senders on different
+local CIDs and wildcard source addresses.
+The delayed-read burst test (59) queues 16 datagrams under a bounded receive
+buffer in each direction before the receiver reads them.
+The port-space test (60) binds a datagram and a stream or seqpacket listener
+to the same CID and port in both orders, then checks delivery to both sockets.
+In a local-mode network namespace, this test and the connected lookup test (50)
+run their stream iterations only; loopback rejects seqpacket connections there.
+The no-loopback route test (61) requires negotiated virtio datagrams in the
+guest, no VMCI fallback, and vsock_loopback unloaded. Run it with
+net.vsock.g2h_fallback=1 to check that CID_LOCAL, CID_ANY, and the guest's
+numeric CID are still rejected.
 
 vsock_perf utility
 -------------------
