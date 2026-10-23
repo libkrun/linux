@@ -855,6 +855,10 @@ ssize_t fuse_chan_send(struct fuse_chan *fch, struct fuse_args *args)
 	return ret;
 }
 
+#if IS_ENABLED(CONFIG_VIRTIO_FS_TEST)
+EXPORT_SYMBOL_GPL(fuse_chan_send);
+#endif
+
 #ifdef CONFIG_FUSE_IO_URING
 static bool fuse_request_queue_background_uring(struct fuse_req *req)
 {

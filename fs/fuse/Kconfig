@@ -40,7 +40,19 @@ config VIRTIO_FS
 	  If you want to share files between guests or with the host, answer Y
 	  or M.
 
-config FUSE_VDAX
+config VIRTIO_FS_TEST
+	bool "Virtio filesystem adversarial test interface"
+	depends on VIRTIO_FS
+	help
+	  Create /dev/virtiofs-test, a root-only interface for sending raw FUSE
+	  requests on an existing virtiofs mount. This bypasses guest VFS name,
+	  inode and file handle validation to test host filesystem confinement.
+	  Requests are sent only when explicitly issued through the interface.
+
+	  See Documentation/filesystems/virtiofs-test.rst. Enable only in test
+	  kernels. If unsure, say N.
+
+config FUSE_DAX
 	bool "Virtio Filesystem Direct Host Memory Access support"
 	default FUSE_DAX
 	select INTERVAL_TREE

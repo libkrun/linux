@@ -22,6 +22,7 @@
 #include "dev.h"
 #include "fuse_i.h"
 #include "fuse_dev_i.h"
+#include "virtio_fs_test.h"
 
 /* Used to help calculate the FUSE connection's max_pages limit for a request's
  * size. Parts of the struct fuse_req are sliced into scattergather lists in
@@ -1862,8 +1863,14 @@ static int __init virtio_fs_init(void)
 	if (ret < 0)
 		goto unregister_virtio_driver;
 
+	ret = virtio_fs_test_init(&virtio_fs_type);
+	if (ret < 0)
+		goto unregister_filesystem;
+
 	return 0;
 
+unregister_filesystem:
+	unregister_filesystem(&virtio_fs_type);
 unregister_virtio_driver:
 	unregister_virtio_driver(&virtio_fs_driver);
 sysfs_exit:
@@ -1874,6 +1881,7 @@ module_init(virtio_fs_init);
 
 static void __exit virtio_fs_exit(void)
 {
+	virtio_fs_test_exit();
 	unregister_filesystem(&virtio_fs_type);
 	unregister_virtio_driver(&virtio_fs_driver);
 	virtio_fs_sysfs_exit();

@@ -39,6 +39,9 @@ Mount file system with tag ``myfs`` on ``/mnt``:
 Please see https://virtio-fs.gitlab.io/ for details on how to configure QEMU
 and the virtiofsd daemon.
 
+For the optional raw request confinement test interface, see
+:doc:`virtiofs-test`.
+
 Mount options
 -------------
 

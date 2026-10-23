@@ -20,3 +20,4 @@ fuse-$(CONFIG_SYSCTL) += sysctl.o
 fuse-$(CONFIG_FUSE_IO_URING) += dev_uring.o
 
 virtiofs-y := virtio_fs.o
+virtiofs-$(CONFIG_VIRTIO_FS_TEST) += virtio_fs_test.o
