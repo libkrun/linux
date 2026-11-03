@@ -2233,8 +2233,8 @@ int drm_crtc_vblank_start_timer(struct drm_crtc *crtc)
 		 */
 		vtimer->crtc = crtc;
 		spin_lock_init(&vtimer->interval_lock);
-		hrtimer_setup(&vtimer->timer, drm_vblank_timer_function,
-			      CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+		hrtimer_init(&vtimer->timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+		vtimer->timer.function = drm_vblank_timer_function;
 	} else {
 		/*
 		 * Timer should not be active. If it is, wait for the
