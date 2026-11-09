@@ -337,7 +337,7 @@ static void virtio_vsock_rx_fill(struct virtio_vsock *vsock)
 		skb_pull(skb, VIRTIO_VSOCK_SKB_HEADROOM);
 		if (ret >= 0)
 			ret = virtqueue_add_inbuf(vq, vsock->in_bufs, ret, skb,
-						  GFP_KERNEL);
+							  GFP_KERNEL);
 		if (ret < 0) {
 			kfree_skb(skb);
 			break;
@@ -721,6 +721,19 @@ static void virtio_transport_rx_work(struct work_struct *work)
 			}
 
 			pskb_trim_unique(skb, payload_len);
+			/* Small datagrams must not retain the 64 KiB RX allocation. */
+			if (skb_is_nonlinear(skb) &&
+			    le16_to_cpu(hdr->type) == VIRTIO_VSOCK_TYPE_DGRAM &&
+			    payload_len <= VIRTIO_VSOCK_DEFAULT_RX_BUF_SIZE) {
+				struct sk_buff *compact;
+
+				compact = skb_copy_expand(skb, skb_headroom(skb), 0,
+							  GFP_KERNEL);
+				if (compact) {
+					consume_skb(skb);
+					skb = compact;
+				}
+			}
 
 			virtio_transport_deliver_tap_pkt(skb);
 
