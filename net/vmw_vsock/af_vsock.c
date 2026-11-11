@@ -370,9 +370,10 @@ EXPORT_SYMBOL_GPL(vsock_find_connected_socket);
  * @src: source address from the packet
  *
  * Return: true if the packet arrived on the socket's assigned transport and
- * its source matches the stored peer. Loopback packets are generated
- * internally and always use the local CID as their source, including
- * connections using a valid CID alias.
+ * its source matches the stored peer. Unconnected datagram sockets accept
+ * packets from any source on their assigned transport. Loopback packets are
+ * generated internally and always use the local CID as their source,
+ * including connections using a valid CID alias.
  *
  * The caller must hold the socket lock and must not call this for listening
  * sockets, which accept packets from any source and have no assigned
@@ -384,6 +385,11 @@ bool vsock_check_source(const struct vsock_sock *vsk,
 {
 	if (vsk->transport != transport)
 		return false;
+
+	/* Datagram sockets without a peer can receive from any source. */
+	if (sk_vsock(vsk)->sk_type == SOCK_DGRAM &&
+	    !vsock_addr_bound(&vsk->remote_addr))
+		return true;
 
 	if (src->svm_port != vsk->remote_addr.svm_port)
 		return false;
