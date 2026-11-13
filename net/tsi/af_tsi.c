@@ -180,6 +180,15 @@ static int tsi_release(struct socket *sock)
 		sock_release(isocket);
 	}
 
+	if (tsk->csocket) {
+		sock_release(tsk->csocket);
+		tsk->csocket = NULL;
+	}
+	kfree(tsk->bound_addr);
+	tsk->bound_addr = NULL;
+	kfree(tsk->sendto_addr);
+	tsk->sendto_addr = NULL;
+
 	sock_orphan(sk);
 	sk->sk_shutdown = SHUTDOWN_MASK;
 	skb_queue_purge(&sk->sk_receive_queue);
