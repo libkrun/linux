@@ -450,6 +450,7 @@ static void virtio_vsock_event_handle(struct virtio_vsock *vsock,
 {
 	switch (le32_to_cpu(event->id)) {
 	case VIRTIO_VSOCK_EVENT_TRANSPORT_RESET:
+		atomic64_inc(&virtio_transport.transport.reset_generation);
 		virtio_vsock_update_guest_cid(vsock);
 		vsock_for_each_connected_socket(&virtio_transport.transport,
 						virtio_vsock_reset_sock);
@@ -814,6 +815,7 @@ static void virtio_vsock_vqs_del(struct virtio_vsock *vsock)
 	struct sk_buff *skb;
 
 	/* Reset all connected sockets when the VQs disappear */
+	atomic64_inc(&virtio_transport.transport.reset_generation);
 	vsock_for_each_connected_socket(&virtio_transport.transport,
 					virtio_vsock_reset_sock);
 
