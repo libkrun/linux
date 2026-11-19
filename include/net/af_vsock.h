@@ -9,6 +9,7 @@
 #define __AF_VSOCK_H__
 
 #include <linux/kernel.h>
+#include <linux/atomic.h>
 #include <linux/workqueue.h>
 #include <net/netns/vsock.h>
 #include <net/sock.h>
@@ -112,6 +113,7 @@ struct vsock_transport_send_notify_data {
 
 struct vsock_transport {
 	struct module *module;
+	atomic64_t reset_generation;
 
 	/* Initialize/tear-down socket. */
 	int (*init)(struct vsock_sock *, struct vsock_sock *);
