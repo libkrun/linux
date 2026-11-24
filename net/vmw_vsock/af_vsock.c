@@ -142,11 +142,11 @@
 #include <linux/list.h>
 #include <linux/miscdevice.h>
 #include <linux/module.h>
-#include <linux/mutex.h>
 #include <linux/net.h>
 #include <linux/proc_fs.h>
 #include <linux/poll.h>
 #include <linux/random.h>
+#include <linux/rwsem.h>
 #include <linux/skbuff.h>
 #include <linux/smp.h>
 #include <linux/uio.h>
@@ -203,7 +203,7 @@ static const struct vsock_transport *transport_g2h;
 static const struct vsock_transport *transport_dgram_fallback;
 /* Transport used for local communication */
 static const struct vsock_transport *transport_local;
-static DEFINE_MUTEX(vsock_register_mutex);
+static DECLARE_RWSEM(vsock_register_rwsem);
 
 /**** UTILS ****/
 
@@ -571,7 +571,7 @@ static bool vsock_use_local_transport(unsigned int remote_cid)
 {
 	u32 local_cid;
 
-	lockdep_assert_held(&vsock_register_mutex);
+	lockdep_assert_held_read(&vsock_register_rwsem);
 
 	if (!transport_local)
 		return false;
@@ -592,7 +592,7 @@ static bool vsock_use_local_transport(unsigned int remote_cid)
 }
 
 /* Select a route without changing socket ownership. The caller holds
- * vsock_register_mutex and pins the returned transport before releasing it.
+ * vsock_register_rwsem and pins the returned transport before releasing it.
  */
 static const struct vsock_transport *
 vsock_select_transport(struct vsock_sock *vsk,
@@ -604,7 +604,7 @@ vsock_select_transport(struct vsock_sock *vsk,
 	u32 cid = remote_addr->svm_cid;
 	bool vmci_owner;
 
-	lockdep_assert_held(&vsock_register_mutex);
+	lockdep_assert_held_read(&vsock_register_rwsem);
 	*to_host = false;
 	vmci_owner = dgram_owner && dgram_owner->dgram_fallback &&
 		     vsock_net_mode_global(vsk);
@@ -685,7 +685,7 @@ int vsock_assign_transport(struct vsock_sock *vsk, struct vsock_sock *psk)
 	    vsk->remote_addr.svm_cid > VMADDR_CID_HOST)
 		vsk->remote_addr.svm_flags |= VMADDR_FLAG_TO_HOST;
 
-	mutex_lock(&vsock_register_mutex);
+	down_read(&vsock_register_rwsem);
 
 	switch (sk->sk_type) {
 	case SOCK_DGRAM:
@@ -737,11 +737,11 @@ int vsock_assign_transport(struct vsock_sock *vsk, struct vsock_sock *psk)
 	    try_module_get(transport_local->module))
 		local_fallback = transport_local;
 
-	/* It's safe to release the mutex after a successful try_module_get().
+	/* It's safe to release the read lock after a successful try_module_get().
 	 * Whichever transport `new_transport` points at, it won't go away until
 	 * the last module_put() below or in vsock_deassign_transport().
 	 */
-	mutex_unlock(&vsock_register_mutex);
+	up_read(&vsock_register_rwsem);
 
 	if (vsk->transport) {
 		/* transport->release() must be called with sock lock acquired.
@@ -797,7 +797,7 @@ int vsock_assign_transport(struct vsock_sock *vsk, struct vsock_sock *psk)
 
 	return 0;
 err:
-	mutex_unlock(&vsock_register_mutex);
+	up_read(&vsock_register_rwsem);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(vsock_assign_transport);
@@ -831,7 +831,7 @@ vsock_dgram_get_transport(struct vsock_sock *vsk,
 	if (!owner)
 		return ERR_PTR(-ENODEV);
 
-	mutex_lock(&vsock_register_mutex);
+	down_read(&vsock_register_rwsem);
 	/* CID_LOCAL requires loopback, even when a fallback transport exists. */
 	if (cid == VMADDR_CID_LOCAL && !transport_local)
 		goto out;
@@ -883,7 +883,7 @@ vsock_dgram_get_transport(struct vsock_sock *vsk,
 	}
 	if (!try_module_get(transport->module))
 		goto out;
-	mutex_unlock(&vsock_register_mutex);
+	up_read(&vsock_register_rwsem);
 
 	if (shared) {
 		local_cid = transport->get_local_cid();
@@ -906,7 +906,7 @@ put_transport:
 	module_put(transport->module);
 	return ERR_PTR(err);
 out:
-	mutex_unlock(&vsock_register_mutex);
+	up_read(&vsock_register_rwsem);
 	return ERR_PTR(err);
 }
 EXPORT_SYMBOL_GPL(vsock_dgram_get_transport);
@@ -919,10 +919,10 @@ static u32 vsock_registered_transport_cid(const struct vsock_transport **transpo
 {
 	u32 cid = VMADDR_CID_ANY;
 
-	mutex_lock(&vsock_register_mutex);
+	down_read(&vsock_register_rwsem);
 	if (*transport)
 		cid = (*transport)->get_local_cid();
-	mutex_unlock(&vsock_register_mutex);
+	up_read(&vsock_register_rwsem);
 
 	return cid;
 }
@@ -1670,7 +1670,7 @@ static int vsock_dgram_resolve_cid(struct vsock_sock *vsk,
 	if (remote_addr->svm_cid != VMADDR_CID_ANY)
 		return 0;
 
-	mutex_lock(&vsock_register_mutex);
+	down_read(&vsock_register_rwsem);
 	if (owner->dgram_fallback && vsock_net_mode_global(vsk) &&
 	    vsk->local_addr.svm_cid != VMADDR_CID_ANY &&
 	    vsk->local_addr.svm_cid == owner->get_local_cid()) {
@@ -1682,7 +1682,7 @@ static int vsock_dgram_resolve_cid(struct vsock_sock *vsk,
 		remote_addr->svm_cid = owner->get_local_cid();
 		*vmci_self = owner->dgram_fallback;
 	}
-	mutex_unlock(&vsock_register_mutex);
+	up_read(&vsock_register_rwsem);
 
 	return remote_addr->svm_cid == VMADDR_CID_ANY ? -EADDRNOTAVAIL : 0;
 }
@@ -3392,7 +3392,7 @@ EXPORT_SYMBOL_GPL(vsock_core_get_transport);
 int vsock_core_register(const struct vsock_transport *t, int features)
 {
 	const struct vsock_transport *t_h2g, *t_g2h, *t_dgram, *t_local;
-	int err = mutex_lock_interruptible(&vsock_register_mutex);
+	int err = down_write_killable(&vsock_register_rwsem);
 
 	if (err)
 		return err;
@@ -3440,14 +3440,14 @@ int vsock_core_register(const struct vsock_transport *t, int features)
 	transport_local = t_local;
 
 err_busy:
-	mutex_unlock(&vsock_register_mutex);
+	up_write(&vsock_register_rwsem);
 	return err;
 }
 EXPORT_SYMBOL_GPL(vsock_core_register);
 
 void vsock_core_unregister(const struct vsock_transport *t)
 {
-	mutex_lock(&vsock_register_mutex);
+	down_write(&vsock_register_rwsem);
 
 	if (transport_h2g == t)
 		transport_h2g = NULL;
@@ -3461,7 +3461,7 @@ void vsock_core_unregister(const struct vsock_transport *t)
 	if (transport_local == t)
 		transport_local = NULL;
 
-	mutex_unlock(&vsock_register_mutex);
+	up_write(&vsock_register_rwsem);
 }
 EXPORT_SYMBOL_GPL(vsock_core_unregister);
 
